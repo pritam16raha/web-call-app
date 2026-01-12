@@ -319,7 +319,24 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
           const offerData = offerDoc.data();
           const callerId = offerData.fromUserId;
 
-          // Create answer
+          // IMPORTANT: Create peer connection and setup remote stream listener FIRST
+          // before calling createAnswer, because setRemoteDescription can trigger
+          // ontrack events immediately
+          webRTCService.createPeerConnection(callerId);
+          
+          // Setup remote stream listener BEFORE creating answer
+          webRTCService.setupRemoteStreamListener(callerId, (stream) => {
+            setCallState(prev => {
+              const newRemoteStreams = new Map(prev.remoteStreams);
+              newRemoteStreams.set(callerId, stream);
+              return { ...prev, remoteStreams: newRemoteStreams };
+            });
+          });
+
+          // Listen for ICE candidates
+          webRTCService.listenForCandidates(callId, callerId);
+
+          // Now create answer (will reuse the existing peer connection)
           const answer = await webRTCService.createAnswer(callerId, offerData.offer);
 
           await setDoc(doc(db, 'calls', callId, 'answers', user.uid), {
@@ -327,18 +344,6 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
             fromUserId: user.uid,
             toUserId: callerId,
             timestamp: Timestamp.now(),
-          });
-
-          // Listen for ICE candidates
-          webRTCService.listenForCandidates(callId, callerId);
-
-          // Setup remote stream listener
-          webRTCService.setupRemoteStreamListener(callerId, (stream) => {
-            setCallState(prev => {
-              const newRemoteStreams = new Map(prev.remoteStreams);
-              newRemoteStreams.set(callerId, stream);
-              return { ...prev, remoteStreams: newRemoteStreams };
-            });
           });
         }
 
