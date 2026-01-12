@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useRef, useCallback } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { useCall } from '@/contexts/CallContext';
 import { Mic, MicOff, Video, VideoOff, PhoneOff, Users } from 'lucide-react';
 
@@ -20,7 +20,6 @@ export default function CallUI() {
   } = useCall();
 
   const localVideoRef = useRef<HTMLVideoElement>(null);
-  const remoteMediaRefs = useRef<Map<string, HTMLVideoElement | HTMLAudioElement>>(new Map());
 
   // Setup local video
   useEffect(() => {
@@ -28,34 +27,6 @@ export default function CallUI() {
       localVideoRef.current.srcObject = localStream;
     }
   }, [localStream]);
-
-  // Setup remote streams (audio/video)
-  useEffect(() => {
-    remoteStreams.forEach((stream, userId) => {
-      const mediaElement = remoteMediaRefs.current.get(userId);
-      if (mediaElement && mediaElement.srcObject !== stream) {
-        mediaElement.srcObject = stream;
-        // Ensure audio plays - handle autoplay restrictions
-        mediaElement.play().catch(err => {
-          console.log('Autoplay blocked, will play on user interaction:', err);
-        });
-      }
-    });
-  }, [remoteStreams]);
-
-  // Callback to set remote media ref and attach stream
-  const setRemoteMediaRef = useCallback((userId: string, element: HTMLVideoElement | HTMLAudioElement | null) => {
-    if (element) {
-      remoteMediaRefs.current.set(userId, element);
-      const stream = remoteStreams.get(userId);
-      if (stream && element.srcObject !== stream) {
-        element.srcObject = stream;
-        element.play().catch(err => {
-          console.log('Autoplay blocked:', err);
-        });
-      }
-    }
-  }, [remoteStreams]);
 
   if (!isInCall && !isCalling) return null;
 
@@ -111,11 +82,19 @@ export default function CallUI() {
         </div>
       </div>
 
-      {/* Hidden audio elements for voice calls - plays remote audio */}
-      {callType === 'voice' && Array.from(remoteStreams.entries()).map(([userId]) => (
+      {/* Hidden audio elements for ALL remote streams - ensures audio always plays */}
+      {/* For video calls, video element may have audio blocked by autoplay policy */}
+      {Array.from(remoteStreams.entries()).map(([userId, stream]) => (
         <audio
           key={`audio-${userId}`}
-          ref={(el) => setRemoteMediaRef(userId, el)}
+          ref={(el) => {
+            if (el && el.srcObject !== stream) {
+              el.srcObject = stream;
+              el.volume = 1;
+              el.muted = false;
+              el.play().catch(err => console.log('Audio autoplay blocked:', err));
+            }
+          }}
           autoPlay
           playsInline
         />
@@ -131,14 +110,20 @@ export default function CallUI() {
             remoteStreams.size === 3 ? 'grid-cols-2 md:grid-cols-3' :
             'grid-cols-2 md:grid-cols-2'
           } gap-2 p-4`}>
-            {/* Remote videos */}
-            {Array.from(remoteStreams.entries()).map(([userId]) => {
+            {/* Remote videos - audio is handled by hidden audio elements above */}
+            {Array.from(remoteStreams.entries()).map(([userId, stream]) => {
               const participant = participants.find(p => p.uid === userId);
               return (
                 <div key={userId} className="relative bg-gray-800 rounded-lg overflow-hidden">
                   <video
-                    ref={(el) => setRemoteMediaRef(userId, el)}
+                    ref={(el) => {
+                      if (el && el.srcObject !== stream) {
+                        el.srcObject = stream;
+                        el.play().catch(err => console.log('Video autoplay blocked:', err));
+                      }
+                    }}
                     autoPlay
+                    muted
                     playsInline
                     className="w-full h-full object-cover"
                   />
