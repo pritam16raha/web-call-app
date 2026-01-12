@@ -69,6 +69,68 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [user]);
 
+  // Handle browser close/refresh - end call properly
+  useEffect(() => {
+    const handleBeforeUnload = async () => {
+      if (callState.callId) {
+        // Synchronously update Firestore before page unloads
+        try {
+          await updateDoc(doc(db, 'calls', callState.callId), {
+            status: 'ended',
+            endedAt: Timestamp.now(),
+          });
+        } catch (err) {
+          console.error('Error ending call on page unload:', err);
+        }
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [callState.callId]);
+
+  // Listen for call status changes when in a call - auto disconnect if other user ends
+  useEffect(() => {
+    if (!callState.callId || !callState.isInCall) return;
+
+    const callRef = doc(db, 'calls', callState.callId);
+    const unsubscribe = onSnapshot(callRef, (snapshot) => {
+      if (!snapshot.exists()) {
+        // Call document was deleted
+        handleRemoteDisconnect();
+        return;
+      }
+
+      const callData = snapshot.data();
+      if (callData?.status === 'ended' || callData?.status === 'missed') {
+        handleRemoteDisconnect();
+      }
+    });
+
+    return () => unsubscribe();
+  }, [callState.callId, callState.isInCall]);
+
+  // Handle remote user disconnect
+  const handleRemoteDisconnect = useCallback(() => {
+    if (webRTCService) {
+      webRTCService.cleanup();
+    }
+
+    setCallState({
+      callId: null,
+      isInCall: false,
+      isCalling: false,
+      isReceivingCall: false,
+      callType: null,
+      localStream: null,
+      remoteStreams: new Map(),
+      participants: [],
+      isMuted: false,
+      isVideoOff: false,
+    });
+    setIncomingCall(null);
+  }, [webRTCService]);
+
   // Listen for incoming calls
   useEffect(() => {
     if (!user) return;
